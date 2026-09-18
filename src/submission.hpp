@@ -64,7 +64,7 @@ void update_row(
   }
 }
 
-// Parallel orchestration: divides interior rows across threads, no arithmetic.
+// Parallel orchestration: divides interior rows across threads
 void update_interior(ConstGridView old_view, GridView new_view) {
   const std::size_t rows{old_view.rows};
   const std::size_t cols{old_view.cols};
