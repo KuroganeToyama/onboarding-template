@@ -45,7 +45,26 @@ void copy_boundary(ConstGridView old_view, GridView new_view) {
   }
 }
 
-// Five-point stencil update for interior cells: parallel by row, SIMD by column
+// Five-point stencil update for one interior row
+void update_row(
+  std::size_t i,
+  const double* __restrict old_base, double* __restrict new_base,
+  std::size_t cols, std::size_t old_stride, std::size_t new_stride
+) {
+  const double* center_row{old_base + i * old_stride};
+  const double* up_row{center_row - old_stride};
+  const double* down_row{center_row + old_stride};
+  double* new_row{new_base + i * new_stride};
+
+  // OpenMP canonical loop form required for #pragma omp simd
+  #pragma omp simd
+  for (std::size_t j = 1; j < cols - 1; ++j) {
+    new_row[j] = 0.5   * center_row[j] +
+                 0.125 * (up_row[j] + down_row[j] + center_row[j - 1] + center_row[j + 1]);
+  }
+}
+
+// Parallel orchestration: divides interior rows across threads, no arithmetic.
 void update_interior(ConstGridView old_view, GridView new_view) {
   const std::size_t rows{old_view.rows};
   const std::size_t cols{old_view.cols};
@@ -61,17 +80,7 @@ void update_interior(ConstGridView old_view, GridView new_view) {
   #pragma omp parallel for schedule(static) default(none) \
       shared(rows, cols, old_stride, new_stride, old_base, new_base)
   for (std::size_t i = 1; i < rows - 1; ++i) {
-    const double* center_row{old_base + i * old_stride};
-    const double* up_row{center_row - old_stride};
-    const double* down_row{center_row + old_stride};
-    double* new_row{new_base + i * new_stride};
-
-    // OpenMP canonical loop form required for #pragma omp simd
-    #pragma omp simd
-    for (std::size_t j = 1; j < cols - 1; ++j) {
-      new_row[j] = 0.5   * center_row[j] +
-                   0.125 * (up_row[j] + down_row[j] + center_row[j - 1] + center_row[j + 1]);
-    }
+    update_row(i, old_base, new_base, cols, old_stride, new_stride);
   }
 }
 
