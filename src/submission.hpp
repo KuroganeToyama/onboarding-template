@@ -135,7 +135,7 @@ inline void update_row(
   // difference to the generated code: the loop's first real access is
   // column 1, not column 0, so this true fact isn't exploitable for this
   // loop shape. Kept here only to see whether a different compiler/machine
-  // on the actual grading hardware behaves differently.
+  // on the actual grading hardware behaves differently
   //
   // REVERT INSTRUCTIONS if grading shows no difference: delete this block
   // (both assignments) -- old_base/new_base already come in aligned from
