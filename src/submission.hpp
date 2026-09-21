@@ -139,7 +139,7 @@ inline void update_row(
   //
   // REVERT INSTRUCTIONS if grading shows no difference: delete this block
   // (both assignments) -- old_base/new_base already come in aligned from
-  // the parameter list, nothing else needs to change.
+  // the parameter list, nothing else needs to change
   old_base = static_cast<const double*>(__builtin_assume_aligned(old_base, kAlignment));
   new_base = static_cast<double*>(__builtin_assume_aligned(new_base, kAlignment));
   // === end experimental block ===
