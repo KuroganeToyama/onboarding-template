@@ -67,7 +67,7 @@ inline AlignedBuffer allocate_zeroed(std::size_t rows, std::size_t stride) {
   // one thread doing a single-threaded fill happened to run. Safe either
   // way: on a non-NUMA machine (e.g. a single-socket cloud VM, the more
   // likely case for the evaluator) this is still just correct zeroing,
-  // parallel instead of serial, with no NUMA effect to gain from.
+  // parallel instead of serial, with no NUMA effect to gain from
   //
   // REVERT INSTRUCTIONS if benchmarking shows this doesn't help: delete
   // the pragma and the loop below it, and restore the one-line original:
