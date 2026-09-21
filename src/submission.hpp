@@ -65,7 +65,7 @@ inline AlignedBuffer allocate_zeroed(std::size_t rows, std::size_t stride) {
   // access pattern here means each thread's own future working set lands
   // on its own socket instead of the whole buffer landing wherever the
   // one thread doing a single-threaded fill happened to run. Safe either
-  // way: on a non-NUMA machine (e.g. a single-socket cloud VM, the more
+  // way: on a non-NUMA machine (a single-socket cloud VM, the more
   // likely case for the evaluator) this is still just correct zeroing,
   // parallel instead of serial, with no NUMA effect to gain from
   //
