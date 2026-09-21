@@ -8,9 +8,9 @@
 #include <stdexcept>
 
 // Role: internal helpers backing Grid and apply_stencil.
-// Reason: named + inline (not an anonymous namespace) so the external-linkage
-// callers below (Grid's inline members, apply_stencil) stay well-defined if
-// this header is included from more than one translation unit.
+// Reason: named + inline so the external-linkage
+// callers below stay well-defined if this header is included 
+// from more than one translation unit.
 namespace detail {
 
 // Role: alignment target for the grid buffer, in bytes and in doubles.
@@ -54,8 +54,8 @@ inline AlignedBuffer allocate_zeroed(std::size_t rows, std::size_t stride) {
   double* p{static_cast<double*>(
     ::operator new(count * sizeof(double), std::align_val_t{kAlignment})
   )};
-  // What: zero-fill after allocating.
-  // Why: aligned `operator new` doesn't zero memory, and Grid's contract
+  // Role: zero-fill after allocating.
+  // Reason: aligned `operator new` doesn't zero memory, and Grid's contract
   // requires every cell to start at zero.
   std::fill(p, p + count, 0.0);
   return AlignedBuffer(p);
@@ -64,7 +64,7 @@ inline AlignedBuffer allocate_zeroed(std::size_t rows, std::size_t stride) {
 // Role: bundles rows+cols (Extent) and the physical row stride (Layout)
 // into one value instead of three loose integers.
 // Reason: rows/cols never travel apart, and neither do the grid and its
-// stride; keeping them one type means extending to a third dimension only
+// stride; keeping them one type means extending to another dimension only
 // touches Extent/Layout and the kernels' loop nest, not Grid's ownership
 // or allocation code.
 struct Extent {
@@ -117,12 +117,10 @@ inline void copy_boundary(ConstGridView old_view, GridView new_view) {
 }
 
 // Role: five-point stencil update for one interior row.
-// Reason old_base/new_base are restrict-qualified here, the actual kernel
+// Reason: old_base/new_base qualify for restrict, the actual kernel
 // boundary where the promise is used: apply_stencil (the only path that
 // reaches this function) always passes pointers from two distinct Grid
-// buffers, so a write through new_base cannot alias a read through
-// old_base. (#pragma omp simd below is a separate promise, about this
-// loop's iterations, not about these two pointers.)
+// buffers, so a write through new_base cannot alias a read through old_base.
 inline void update_row(
   std::size_t i,
   const double* __restrict old_base, double* __restrict new_base,
@@ -133,10 +131,6 @@ inline void update_row(
   const double* down_row{center_row + old_stride};
   double* new_row{new_base + i * new_stride};
 
-  // What: loop written as `j = 1; j < cols - 1`, not the `j + 1 < cols`
-  // style used elsewhere in this file.
-  // Why: #pragma omp simd requires OpenMP's canonical loop form (plain
-  // `=` init, an invariant bound) — this loop has no other reason to differ.
   #pragma omp simd
   for (std::size_t j = 1; j < cols - 1; ++j) {
     new_row[j] = 0.5   * center_row[j] +
@@ -146,24 +140,23 @@ inline void update_row(
 
 // Role: parallel orchestration — divides interior rows across threads.
 // Reason: kept separate from update_row's arithmetic so the scheduling
-// decision can change without touching the math (verified: switching
-// schedule(static) to schedule(guided) is a one-line change confined here).
+// decision can change without touching the math.
 inline void update_interior(ConstGridView old_view, GridView new_view) {
   const std::size_t rows{old_view.rows()};
   const std::size_t cols{old_view.cols()};
   const std::size_t old_stride{old_view.stride()};
   const std::size_t new_stride{new_view.stride()};
 
-  // What: plain pointers here, not restrict-qualified.
-  // Why: this function only forwards them to update_row and does no
+  // Role: plain pointers here, not restricted.
+  // Reason: this function only forwards them to update_row and does no
   // arithmetic itself — the restrict promise belongs at update_row's
   // parameters, the actual kernel boundary.
   const double* old_base{old_view.data};
   double* new_base{new_view.data};
 
-  // What: schedule(static).
-  // Why: every row costs the same fixed amount of work, so there's no
-  // imbalance for dynamic/guided to correct — only overhead they'd add.
+  // Role: schedule(static).
+  // Reason: every row costs the same fixed amount of work, so there's no
+  // imbalance for dynamic/guided to correct.
   #pragma omp parallel for schedule(static) default(none) \
       shared(rows, cols, old_stride, new_stride, old_base, new_base)
   for (std::size_t i = 1; i < rows - 1; ++i) {
@@ -229,8 +222,8 @@ inline void apply_stencil(const Grid& old_grid, Grid& new_grid) {
   const detail::ConstGridView old_view{old_grid.view()};
   const detail::GridView new_view{new_grid.view()};
 
-  // What: return early on an empty grid.
-  // Why: also avoids unsigned underflow in `rows - 1` below.
+  // Role: return early on an empty grid.
+  // Reason: also avoids unsigned underflow in `rows - 1` below.
   if (old_view.rows() == 0 || old_view.cols() == 0) {
     return;
   }
