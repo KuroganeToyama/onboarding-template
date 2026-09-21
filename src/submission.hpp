@@ -54,30 +54,10 @@ inline AlignedBuffer allocate_zeroed(std::size_t rows, std::size_t stride) {
   double* p{static_cast<double*>(
     ::operator new(count * sizeof(double), std::align_val_t{kAlignment})
   )};
-
-  // === EXPERIMENTAL: NUMA first-touch (easy to revert, see below) ===
-  // Role: zero-fill after allocating, one row per iteration, in parallel.
+  // Role: zero-fill after allocating.
   // Reason: aligned `operator new` doesn't zero memory, and Grid's contract
-  // requires every cell to start at zero. This is parallelized with the
-  // same row-based schedule(static) split update_interior uses later:
-  // on a NUMA machine, whichever thread first writes ("first touches") a
-  // page decides which socket's RAM backs it, so matching the later
-  // access pattern here means each thread's own future working set lands
-  // on its own socket instead of the whole buffer landing wherever the
-  // one thread doing a single-threaded fill happened to run. Safe either
-  // way: on a non-NUMA machine (a single-socket cloud VM, the more
-  // likely case for the evaluator) this is still just correct zeroing,
-  // parallel instead of serial, with no NUMA effect to gain from
-  //
-  // REVERT INSTRUCTIONS if benchmarking shows this doesn't help: delete
-  // the pragma and the loop below it, and restore the one-line original:
-  //     std::fill(p, p + count, 0.0);
-  #pragma omp parallel for schedule(static) default(none) shared(p, rows, stride)
-  for (std::size_t i = 0; i < rows; ++i) {
-    std::fill(p + i * stride, p + i * stride + stride, 0.0);
-  }
-  // === end experimental block ===
-
+  // requires every cell to start at zero.
+  std::fill(p, p + count, 0.0);
   return AlignedBuffer(p);
 }
 
