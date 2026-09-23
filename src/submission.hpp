@@ -97,9 +97,11 @@ struct BasicGridView {
 using GridView = BasicGridView<double>;
 using ConstGridView = BasicGridView<const double>;
 
-// Role: copies the outermost row and column unchanged.
-// Reason: kept separate from the interior kernel so boundary and interior
-// each have one job, and the interior loop never needs to think about edges.
+// Role: copies the top/bottom rows only; left/right columns for interior
+// rows are handled in update_row instead.
+// Reason: a left/right loop here would stride a full row per touch,
+// wasting a cache-line fetch on 8 bytes; update_row already has those
+// addresses hot from its own neighbor reads.
 inline void copy_boundary(ConstGridView old_view, GridView new_view) {
   const std::size_t rows{old_view.rows()};
   const std::size_t cols{old_view.cols()};
@@ -110,17 +112,12 @@ inline void copy_boundary(ConstGridView old_view, GridView new_view) {
     new_view.data[j] = old_view.data[j];
     new_view.data[(rows - 1) * new_stride + j] = old_view.data[(rows - 1) * old_stride + j];
   }
-  for (std::size_t i{0}; i < rows; ++i) {
-    new_view.data[i * new_stride] = old_view.data[i * old_stride];
-    new_view.data[i * new_stride + cols - 1] = old_view.data[i * old_stride + cols - 1];
-  }
 }
 
-// Role: five-point stencil update for one interior row.
-// Reason: old_base/new_base qualify for restrict, the actual kernel
-// boundary where the promise is used: apply_stencil (the only path that
-// reaches this function) always passes pointers from two distinct Grid
-// buffers, so a write through new_base cannot alias a read through old_base.
+// Role: five-point update for one interior row, plus that row's own
+// left/right boundary cells (see copy_boundary).
+// Reason (restrict): apply_stencil always passes two distinct Grid
+// buffers, so a write through new_base can't alias a read through old_base.
 inline void update_row(
   std::size_t i,
   const double* __restrict old_base, double* __restrict new_base,
@@ -131,11 +128,19 @@ inline void update_row(
   const double* down_row{center_row + old_stride};
   double* new_row{new_base + i * new_stride};
 
+  // Left boundary: primes this cache line before the loop's j=1 reads it
+  // as its own left neighbor.
+  new_row[0] = center_row[0];
+
   #pragma omp simd
   for (std::size_t j = 1; j < cols - 1; ++j) {
     new_row[j] = 0.5   * center_row[j] +
                  0.125 * (up_row[j] + down_row[j] + center_row[j - 1] + center_row[j + 1]);
   }
+
+  // Right boundary: reuses the cache line the loop's last iteration just
+  // read as its right neighbor.
+  new_row[cols - 1] = center_row[cols - 1];
 }
 
 // Role: parallel orchestration — divides interior rows across threads.
