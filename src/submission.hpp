@@ -19,6 +19,11 @@ namespace detail {
 inline constexpr std::size_t kAlignment{64};
 inline constexpr std::size_t kAlignmentDoubles{kAlignment / sizeof(double)};
 
+// Role: leading padding before logical column 0.
+// Reason: shifts column 1, the loop's real first access, onto the
+// alignment boundary instead of column 0.
+inline constexpr std::size_t kLeadingPadDoubles{kAlignmentDoubles - 1};
+
 // Role: rounds a value up to the next multiple.
 // Reason: generic on purpose — used below to pad stride to a whole alignment
 // unit, kept separate from that use so it stays a plain, reusable helper.
@@ -74,8 +79,8 @@ struct Extent {
 
 struct Layout {
   Extent extent;
-  // Physical distance between row starts; >= extent.cols, the gap is
-  // padding that keeps every row aligned.
+  // Physical distance between row starts: kLeadingPadDoubles + extent.cols,
+  // rounded up so every row also starts aligned.
   std::size_t stride;
 };
 
@@ -109,8 +114,9 @@ inline void copy_boundary(ConstGridView old_view, GridView new_view) {
   const std::size_t new_stride{new_view.stride()};
 
   for (std::size_t j{0}; j < cols; ++j) {
-    new_view.data[j] = old_view.data[j];
-    new_view.data[(rows - 1) * new_stride + j] = old_view.data[(rows - 1) * old_stride + j];
+    new_view.data[kLeadingPadDoubles + j] = old_view.data[kLeadingPadDoubles + j];
+    new_view.data[(rows - 1) * new_stride + kLeadingPadDoubles + j] =
+      old_view.data[(rows - 1) * old_stride + kLeadingPadDoubles + j];
   }
 }
 
@@ -123,24 +129,42 @@ inline void update_row(
   const double* __restrict old_base, double* __restrict new_base,
   std::size_t cols, std::size_t old_stride, std::size_t new_stride
 ) {
-  const double* center_row{old_base + i * old_stride};
-  const double* up_row{center_row - old_stride};
-  const double* down_row{center_row + old_stride};
-  double* new_row{new_base + i * new_stride};
-
-  // Left boundary: primes this cache line before the loop's j=1 reads it
-  // as its own left neighbor.
-  new_row[0] = center_row[0];
-
-  #pragma omp simd
-  for (std::size_t j = 1; j < cols - 1; ++j) {
-    new_row[j] = 0.5   * center_row[j] +
-                 0.125 * (up_row[j] + down_row[j] + center_row[j - 1] + center_row[j + 1]);
+  // cols < 2: one column, simultaneously the left and right boundary --
+  // no column 1 for the aligned path below to point at.
+  if (cols < 2) {
+    if (cols == 1) {
+      new_base[i * new_stride + kLeadingPadDoubles] = old_base[i * old_stride + kLeadingPadDoubles];
+    }
+    return;
   }
 
-  // Right boundary: reuses the cache line the loop's last iteration just
-  // read as its right neighbor.
-  new_row[cols - 1] = center_row[cols - 1];
+  // center_row/new_row point at column 1, kAlignmentDoubles into the row
+  // (past the leading pad) -- aligned, same as the row's own start.
+  // up_row/down_row are a whole `stride` away, so they land on it too.
+  // Asserted individually; the compiler can't derive this from a runtime
+  // stride value on its own.
+  const double* center_row = static_cast<const double*>(
+    __builtin_assume_aligned(old_base + i * old_stride + kAlignmentDoubles, kAlignment));
+  const double* up_row = static_cast<const double*>(
+    __builtin_assume_aligned(center_row - old_stride, kAlignment));
+  const double* down_row = static_cast<const double*>(
+    __builtin_assume_aligned(center_row + old_stride, kAlignment));
+  double* new_row = static_cast<double*>(
+    __builtin_assume_aligned(new_base + i * new_stride + kAlignmentDoubles, kAlignment));
+
+  // Left boundary (column 0) is center_row[-1]; primes this cache line
+  // before the loop's k=0 reads it as its own left neighbor.
+  new_row[-1] = center_row[-1];
+
+  #pragma omp simd
+  for (std::size_t k = 0; k < cols - 2; ++k) {
+    new_row[k] = 0.5   * center_row[k] +
+                 0.125 * (up_row[k] + down_row[k] + center_row[k - 1] + center_row[k + 1]);
+  }
+
+  // Right boundary (column cols-1) is center_row[cols-2]; reuses the
+  // cache line the loop's last iteration just read as its right neighbor.
+  new_row[cols - 2] = center_row[cols - 2];
 }
 
 // Role: parallel orchestration — divides interior rows across threads.
@@ -172,9 +196,8 @@ inline void update_interior(ConstGridView old_view, GridView new_view) {
 }  // namespace detail
 
 // Role: Grid owns one flat, aligned, zero-initialized buffer for the field.
-// Reason: layout_.stride is layout_.extent.cols rounded up for alignment;
-// the padding this creates is internal-only and never surfaces through
-// operator().
+// Reason: layout_.stride pads for both leading alignment and row rounding;
+// all of it is internal-only and never surfaces through operator().
 class Grid {
 private:
   detail::Layout layout_;
@@ -182,7 +205,8 @@ private:
 
 public:
   Grid(std::size_t rows, std::size_t cols)
-    : layout_{{rows, cols}, detail::round_up_to_multiple(cols, detail::kAlignmentDoubles)}
+    : layout_{{rows, cols}, detail::round_up_to_multiple(
+        detail::kLeadingPadDoubles + cols, detail::kAlignmentDoubles)}
     , data_{detail::allocate_zeroed(layout_.extent.rows, layout_.stride)}
   { }
 
@@ -199,11 +223,11 @@ public:
   Grid& operator=(Grid&&) = default;
 
   double& operator()(std::size_t i, std::size_t j) {
-    return data_[i * layout_.stride + j];
+    return data_[i * layout_.stride + detail::kLeadingPadDoubles + j];
   }
 
   double operator()(std::size_t i, std::size_t j) const {
-    return data_[i * layout_.stride + j];
+    return data_[i * layout_.stride + detail::kLeadingPadDoubles + j];
   }
 
   // Role: non-owning access for kernels — pointer plus shape, nothing else.
