@@ -141,22 +141,18 @@ inline void update_row(
   // center_row/new_row point at column 1, kAlignmentDoubles into the row
   // (past the leading pad) -- aligned, same as the row's own start.
   // up_row/down_row are a whole `stride` away, so they land on it too.
-  // Asserted individually; the compiler can't derive this from a runtime
-  // stride value on its own.
-  const double* center_row = static_cast<const double*>(
-    __builtin_assume_aligned(old_base + i * old_stride + kAlignmentDoubles, kAlignment));
-  const double* up_row = static_cast<const double*>(
-    __builtin_assume_aligned(center_row - old_stride, kAlignment));
-  const double* down_row = static_cast<const double*>(
-    __builtin_assume_aligned(center_row + old_stride, kAlignment));
-  double* new_row = static_cast<double*>(
-    __builtin_assume_aligned(new_base + i * new_stride + kAlignmentDoubles, kAlignment));
+  const double* center_row = old_base + i * old_stride + kAlignmentDoubles;
+  const double* up_row = center_row - old_stride;
+  const double* down_row = center_row + old_stride;
+  double* new_row = new_base + i * new_stride + kAlignmentDoubles;
 
   // Left boundary (column 0) is center_row[-1]; primes this cache line
   // before the loop's k=0 reads it as its own left neighbor.
   new_row[-1] = center_row[-1];
 
-  #pragma omp simd
+  // aligned(...) asserts these four pointers are kAlignment-byte aligned;
+  // if it's false, then it would result in undefined behavior.
+  #pragma omp simd aligned(center_row, up_row, down_row, new_row : kAlignment)
   for (std::size_t k = 0; k < cols - 2; ++k) {
     new_row[k] = 0.5   * center_row[k] +
                  0.125 * (up_row[k] + down_row[k] + center_row[k - 1] + center_row[k + 1]);
