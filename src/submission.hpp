@@ -122,11 +122,11 @@ inline void copy_boundary(ConstGridView old_view, GridView new_view) {
 
 // Role: five-point update for one interior row, plus that row's own
 // left/right boundary cells (see copy_boundary).
-// Reason (restrict): apply_stencil always passes two distinct Grid
-// buffers, so a write through new_base can't alias a read through old_base.
+// Reason: no restrict qualifier -- not standard C++, and #pragma omp simd
+// below already asserts the no-aliasing it would have provided.
 inline void update_row(
   std::size_t i,
-  const double* __restrict old_base, double* __restrict new_base,
+  const double* old_base, double* new_base,
   std::size_t cols, std::size_t old_stride, std::size_t new_stride
 ) {
   // cols < 2: one column, simultaneously the left and right boundary --
